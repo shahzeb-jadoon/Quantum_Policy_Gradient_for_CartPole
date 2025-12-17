@@ -102,17 +102,18 @@ class TinyMLP(nn.Module):
 
 class QuantumCircuit(nn.Module):
     """
-    4-qubit Variational Quantum Circuit for CartPole policy.
+    4-qubit Variational Quantum Circuit for CartPole policy with data re-uploading.
     
     Uses PennyLane with PyTorch integration via qml.qnn.TorchLayer.
     
-    Architecture:
-    - AngleEmbedding: Encode 4 state variables as rotation angles
-    - StronglyEntanglingLayers: Variational quantum circuit
+    Architecture (Data Re-uploading):
+    - Interleave AngleEmbedding and StronglyEntanglingLayers
+    - Structure: (Encode → Variational) × n_layers
     - Measurements: Expectation values ⟨Z₀⟩ and ⟨Z₁⟩
     
     Parameters: n_layers × n_qubits × 3 rotations per layer
     - Single layer (n_layers=1): 1 × 4 × 3 = 12 parameters
+    - Three layers (n_layers=3): 3 × 4 × 3 = 36 parameters
     """
     
     def __init__(self, n_qubits=4, n_layers=1):
@@ -143,7 +144,12 @@ class QuantumCircuit(nn.Module):
     
     def _circuit(self, inputs, weights):
         """
-        Quantum circuit implementation.
+        Quantum circuit implementation with data re-uploading.
+        
+        Data re-uploading interleaves state encoding and variational layers,
+        creating non-linear transformations and richer feature representations.
+        
+        Structure: (AngleEmbedding → StronglyEntanglingLayers) × n_layers
         
         Args:
             inputs (torch.Tensor): State variables, shape (4,)
@@ -152,11 +158,13 @@ class QuantumCircuit(nn.Module):
         Returns:
             tuple: (⟨Z₀⟩, ⟨Z₁⟩) expectation values
         """
-        # Encode state into quantum circuit
-        qml.AngleEmbedding(inputs, wires=range(self.n_qubits))
-        
-        # Apply variational layers
-        qml.StronglyEntanglingLayers(weights, wires=range(self.n_qubits))
+        # Interleave encoding and variational layers
+        for layer in range(self.n_layers):
+            # Re-upload state data
+            qml.AngleEmbedding(inputs, wires=range(self.n_qubits))
+            
+            # Apply variational transformation for this layer
+            qml.StronglyEntanglingLayers(weights[layer:layer+1], wires=range(self.n_qubits))
         
         # Measure expectation values on first two qubits
         return qml.expval(qml.PauliZ(0)), qml.expval(qml.PauliZ(1))
