@@ -721,3 +721,64 @@ class TestQuantumPolicyAgentCompatibility:
         assert not np.isnan(loss)
 
 
+class TestQuantumPolicyParityMeasurement:
+    """Test parity measurement mode."""
+    
+    def test_parity_initialization(self):
+        """Test policy can be initialized with parity measurement."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        assert qp.measurement == 'parity'
+    
+    def test_parity_forward_output(self):
+        """Test parity mode produces valid probabilities."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        assert probs.shape == (2,)
+        assert torch.allclose(probs.sum(), torch.tensor(1.0))
+    
+    def test_parity_deterministic(self):
+        """Test parity mode gives deterministic output (one-hot)."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        # One probability should be 1.0, the other 0.0
+        assert torch.any(probs == 1.0)
+        assert torch.any(probs == 0.0)
+    
+    def test_parity_same_input_same_output(self):
+        """Test parity mode is deterministic (same input → same output)."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs1 = qp(state)
+        probs2 = qp(state)
+        
+        assert torch.allclose(probs1, probs2)
+    
+    def test_parity_action_selection(self):
+        """Test action selection works with parity measurement."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        action, log_prob = qp.get_action(state)
+        
+        assert action in [0, 1]
+        assert isinstance(log_prob, torch.Tensor)
+    
+    def test_invalid_measurement_raises_error(self):
+        """Test invalid measurement mode raises error."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='invalid')
+        state = torch.randn(4)
+        
+        with pytest.raises(ValueError, match="Unknown measurement strategy"):
+            qp(state)
+
+
+
+
+
