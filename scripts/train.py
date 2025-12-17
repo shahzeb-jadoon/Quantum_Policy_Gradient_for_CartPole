@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from pathlib import Path
 
-from src.models import TinyMLP
+from src.models import TinyMLP, QuantumPolicy
 from src.agent import REINFORCEAgent
 from src.env_wrapper import create_env
 from src.utils import save_training_results, plot_training_curve, print_summary
@@ -88,14 +88,48 @@ def train_classical(args):
 
 
 def train_quantum(args):
-    """Train quantum VQC agent (placeholder for Phase 3)."""
-    print("\n" + "="*60)
-    print("QUANTUM TRAINING NOT YET IMPLEMENTED")
-    print("="*60)
-    print("Quantum agent will be implemented in Phase 2-3.")
-    print("For now, use --mode classical to train the baseline.")
-    print("="*60 + "\n")
-    raise NotImplementedError("Quantum training coming in Phase 3")
+    """Train quantum VQC agent."""
+    print(f"\n{'='*60}")
+    print(f"TRAINING QUANTUM AGENT")
+    print(f"{'='*60}")
+    print(f"Seed: {args.seed}")
+    print(f"Episodes: {args.episodes}")
+    print(f"Learning rate: {args.lr}")
+    print(f"Gamma: {args.gamma}")
+    print(f"Circuit depth: {args.depth} layers")
+    print(f"Gradient method: {args.diff_method}")
+    print(f"{'='*60}\n")
+    
+    # Create quantum policy
+    # Note: diff_method is handled by PennyLane's default.qubit device
+    # 'backprop' is automatic for simulators, 'parameter-shift' requires explicit QNode config
+    policy = QuantumPolicy(n_qubits=4, n_layers=args.depth, measurement='softmax')
+    print(f"Model parameters: {policy.count_parameters()}")
+    
+    # Create agent
+    agent = REINFORCEAgent(policy, lr=args.lr, gamma=args.gamma)
+    
+    # Create environment
+    env = create_env()
+    
+    # Train
+    print(f"Starting training with {args.diff_method} gradients...")
+    if args.diff_method == 'parameter-shift':
+        print("WARNING: Parameter-shift is slow. Consider using backprop for prototyping.")
+    
+    stats = agent.train(num_episodes=args.episodes, env=env, verbose=True)
+    
+    # Save results
+    save_training_results(stats.episode_rewards, args.seed, args.mode)
+    plot_training_curve(stats.episode_rewards, args.seed, args.mode)
+    print_summary(stats.episode_rewards, args.mode)
+    
+    # Save model checkpoint
+    checkpoint_dir = Path('checkpoints') / args.mode
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / f'seed{args.seed}_final.pth'
+    torch.save(policy.state_dict(), checkpoint_path)
+    print(f"Model saved to {checkpoint_path}")
 
 
 def main():
