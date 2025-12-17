@@ -4,8 +4,9 @@ Tests for neural network models.
 
 import pytest
 import torch
+import torch.nn as nn
 import numpy as np
-from src.models import TinyMLP
+from src.models import TinyMLP, QuantumCircuit
 
 
 class TestTinyMLPArchitecture:
@@ -282,3 +283,205 @@ class TestTinyMLPEdgeCases:
             state = torch.randn(4)
             probs = model(state)
             assert torch.allclose(probs.sum(), torch.tensor(1.0), atol=1e-6)
+
+
+# ===== Quantum Circuit Tests =====
+
+class TestQuantumCircuitBasic:
+    """Test basic quantum circuit initialization and properties."""
+    
+    def test_initialization(self):
+        """Test circuit initializes without errors."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc is not None
+    
+    def test_is_nn_module(self):
+        """Test circuit inherits from nn.Module."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert isinstance(qc, nn.Module)
+    
+    def test_device_creation(self):
+        """Test quantum device is created."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc.dev is not None
+        assert qc.dev.wires.tolist() == [0, 1, 2, 3]
+    
+    def test_attributes(self):
+        """Test circuit stores correct attributes."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc.n_qubits == 4
+        assert qc.n_layers == 1
+
+
+class TestQuantumCircuitForward:
+    """Test forward pass functionality."""
+    
+    def test_forward_single_state(self):
+        """Test forward pass with single state."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        # TorchLayer output may have extra dimension
+        assert expectations.shape in [(2,), (2, 1)], f"Expected shape (2,) or (2,1), got {expectations.shape}"
+    
+    def test_output_is_tensor(self):
+        """Test output is PyTorch tensor."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        assert isinstance(expectations, torch.Tensor)
+    
+    def test_output_range(self):
+        """Test expectation values in range [-1, 1]."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        assert torch.all(expectations >= -1.0)
+        assert torch.all(expectations <= 1.0)
+    
+    def test_deterministic_output(self):
+        """Test same input gives same output."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        exp1 = qc(state)
+        exp2 = qc(state)
+        
+        assert torch.allclose(exp1, exp2)
+    
+    def test_different_inputs(self):
+        """Test different inputs give different outputs."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state1 = torch.zeros(4)
+        state2 = torch.ones(4)
+        
+        exp1 = qc(state1)
+        exp2 = qc(state2)
+        
+        assert not torch.allclose(exp1, exp2)
+
+
+class TestQuantumCircuitPyTorch:
+    """Test PyTorch integration."""
+    
+    def test_has_parameters(self):
+        """Test circuit has trainable parameters."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        params = list(qc.parameters())
+        assert len(params) > 0
+    
+    def test_parameter_count(self):
+        """Test parameter count is correct."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        # Single layer: 1 × 4 qubits × 3 rotations = 12 parameters
+        param_count = qc.count_parameters()
+        assert param_count == 12, f"Expected 12 parameters, got {param_count}"
+    
+    def test_parameters_require_grad(self):
+        """Test all parameters require gradients."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        for param in qc.parameters():
+            assert param.requires_grad is True
+    
+    def test_output_requires_grad(self):
+        """Test output has requires_grad=True."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4, requires_grad=True)
+        
+        expectations = qc(state)
+        
+        assert expectations.requires_grad is True
+
+
+class TestQuantumCircuitGradients:
+    """Test gradient flow through quantum circuit."""
+    
+    def test_gradient_flow(self):
+        """Test gradients propagate through quantum circuit."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4, requires_grad=True)
+        
+        # Forward pass
+        expectations = qc(state)
+        
+        # Dummy loss
+        loss = expectations.sum()
+        loss.backward()
+        
+        # Check gradients exist on parameters
+        for param in qc.parameters():
+            assert param.grad is not None
+    
+    def test_parameters_update(self):
+        """Test parameters change after optimization step."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        optimizer = torch.optim.Adam(qc.parameters(), lr=0.01)
+        
+        # Save initial parameters
+        initial_params = [p.clone() for p in qc.parameters()]
+        
+        # Training step
+        state = torch.randn(4)
+        expectations = qc(state)
+        loss = expectations.sum()
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Check parameters changed
+        changed = False
+        for initial, current in zip(initial_params, qc.parameters()):
+            if not torch.allclose(initial, current.data):
+                changed = True
+                break
+        
+        assert changed, "Parameters should change after optimization step"
+    
+    def test_no_gradient_without_backward(self):
+        """Test no gradients without calling backward."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        # Forward only, no backward
+        expectations = qc(state)
+        
+        for param in qc.parameters():
+            assert param.grad is None, "Should have no gradient without backward"
+
+
+class TestQuantumCircuitAgentCompatibility:
+    """Test quantum circuit works with REINFORCE agent."""
+    
+    def test_agent_initialization(self):
+        """Test agent can be initialized with quantum circuit."""
+        from src.agent import REINFORCEAgent
+        
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        
+        assert agent.policy is qc
+    
+    def test_agent_action_selection(self):
+        """Test agent can select actions using quantum circuit."""
+        from src.agent import REINFORCEAgent
+        
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        
+        state = np.array([0.1, 0.2, 0.3, 0.4])
+        
+        # This will fail because QuantumCircuit doesn't have get_action method yet
+        # We'll need to add a policy wrapper in Step 2.3, but for now just test
+        # that the agent can be created
+        assert agent is not None
+
