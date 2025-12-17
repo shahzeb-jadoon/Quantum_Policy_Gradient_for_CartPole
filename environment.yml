@@ -1,21 +1,26 @@
 name: qml-cartpole
 channels:
-  - pytorch
   - conda-forge
   - defaults
 dependencies:
   - python=3.10
-  - pytorch::pytorch-cpu  # Force CPU version for lightweight install
-  - torchvision-cpu
-  - torchaudio-cpu
   - numpy
-  - matplotlib
-  - seaborn
-  - pandas
-  - tqdm
-  - pyyaml
-  - pytest
   - pip
   - pip:
-    - pennylane>=0.34
-    - gymnasium[classic_control]
+      # PyTorch (CPU version from official wheel)
+      - torch --index-url https://download.pytorch.org/whl/cpu
+      - torchvision --index-url https://download.pytorch.org/whl/cpu
+      - torchaudio --index-url https://download.pytorch.org/whl/cpu
+      # Quantum ML
+      - pennylane>=0.42
+      # RL Environment
+      - gymnasium[classic_control]
+      # Visualization & Analysis
+      - matplotlib
+      - seaborn
+      - pandas
+      # Utilities
+      - tqdm
+      - pyyaml
+      # Testing
+      - pytest

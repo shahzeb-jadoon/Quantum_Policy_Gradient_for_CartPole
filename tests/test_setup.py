@@ -74,8 +74,10 @@ def test_cartpole_step():
 def test_pennylane_device():
     """Verify PennyLane quantum device can be created."""
     dev = qml.device('default.qubit', wires=4)
-    assert dev.num_wires == 4, f"Expected 4 qubits, got {dev.num_wires}"
-    print(f"✓ PennyLane device created: {dev.short_name} with {dev.num_wires} qubits")
+    # PennyLane 0.42+ uses dev.wires instead of dev.num_wires
+    num_wires = len(dev.wires) if hasattr(dev, 'wires') else dev.num_wires
+    assert num_wires == 4, f"Expected 4 qubits, got {num_wires}"
+    print(f"✓ PennyLane device created with {num_wires} qubits")
 
 
 def test_torch_tensor_operations():

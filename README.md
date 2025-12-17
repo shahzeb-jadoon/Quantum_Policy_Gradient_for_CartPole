@@ -26,7 +26,7 @@ This project implements a Quantum Policy Gradient (QPG) agent using a Variationa
 
 ```bash
 # Clone or navigate to project directory
-cd /home/shazzy/projects/qml_project
+cd ../qml_project
 
 # Create conda environment from specification
 conda env create -f environment.yml
