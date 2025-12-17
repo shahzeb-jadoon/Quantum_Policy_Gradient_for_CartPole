@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project-specific outputs
+results/
+checkpoints/
+
+# Reference documents (not tracked in version control)
+docs/
+
+# Virtual environments
+venv/
+env/
+.env
+.conda/
+
+# OS-specific
+.DS_Store
+Thumbs.db
