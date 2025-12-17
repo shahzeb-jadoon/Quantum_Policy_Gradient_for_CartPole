@@ -385,6 +385,14 @@ class TestQuantumCircuitPyTorch:
         param_count = qc.count_parameters()
         assert param_count == 12, f"Expected 12 parameters, got {param_count}"
     
+    def test_parameter_count_multilayer(self):
+        """Test parameter count for 3-layer circuit (data re-uploading)."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=3)
+        
+        # Three layers: 3 × 4 qubits × 3 rotations = 36 parameters
+        param_count = qc.count_parameters()
+        assert param_count == 36, f"Expected 36 parameters, got {param_count}"
+    
     def test_parameters_require_grad(self):
         """Test all parameters require gradients."""
         qc = QuantumCircuit(n_qubits=4, n_layers=1)
