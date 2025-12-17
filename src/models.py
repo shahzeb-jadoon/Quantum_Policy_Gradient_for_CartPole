@@ -4,6 +4,7 @@ Neural network models for CartPole policy learning.
 This module contains policy network architectures:
 - TinyMLP: Classical baseline (4→7→2, ~51 parameters)
 - QuantumCircuit: Quantum VQC baseline (4-qubit, ~45-55 parameters)
+- QuantumPolicy: Quantum policy with Softmax measurement (~42 parameters)
 """
 
 import torch
@@ -196,4 +197,114 @@ class QuantumCircuit(nn.Module):
             int: Total number of parameters
         """
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
+class QuantumPolicy(nn.Module):
+    """
+    Quantum policy network wrapping QuantumCircuit with hybrid output layer.
+    
+    Combines quantum circuit expectation values with classical linear layer
+    and Softmax to produce action probabilities for REINFORCE.
+    
+    Architecture:
+    - QuantumCircuit: Produces 2 expectation values ⟨Z₀⟩, ⟨Z₁⟩
+    - Hybrid Linear Layer: Maps 2 expectations → 2 logits
+    - Softmax: Converts logits to action probabilities
+    
+    Total parameters: quantum_params + hybrid_params
+    - With L=3 layers: 36 (circuit) + 6 (hybrid: 2×2 weights + 2 biases) = 42 params
+    
+    This is the "Softmax measurement strategy" (primary approach).
+    """
+    
+    def __init__(self, n_qubits=4, n_layers=3):
+        """
+        Initialize quantum policy with hybrid output.
+        
+        Args:
+            n_qubits (int): Number of qubits (default: 4)
+            n_layers (int): Number of data re-uploading layers (default: 3)
+        """
+        super(QuantumPolicy, self).__init__()
+        
+        # Quantum circuit component
+        self.quantum_circuit = QuantumCircuit(n_qubits=n_qubits, n_layers=n_layers)
+        
+        # Hybrid linear layer: 2 expectations → 2 action logits
+        # Parameters: 2×2 weights + 2 biases = 6 parameters
+        self.hybrid_layer = nn.Linear(2, 2)
+    
+    def forward(self, state):
+        """
+        Forward pass through quantum-classical hybrid network.
+        
+        Args:
+            state (torch.Tensor): CartPole state, shape (4,) or (batch, 4)
+            
+        Returns:
+            torch.Tensor: Action probabilities, shape (2,) or (batch, 2)
+        """
+        # Get expectation values from quantum circuit
+        expectations = self.quantum_circuit(state)
+        
+        # Ensure expectations has correct shape for linear layer
+        if expectations.dim() == 2 and expectations.shape[-1] == 1:
+            expectations = expectations.squeeze(-1)
+        
+        # Map expectations to logits via hybrid layer
+        logits = self.hybrid_layer(expectations)
+        
+        # Convert to probabilities via softmax
+        probs = F.softmax(logits,dim=-1)
+        
+        return probs
+    
+    def get_action(self, state):
+        """
+        Sample an action from the policy distribution.
+        
+        Args:
+            state (torch.Tensor): CartPole state, shape (4,)
+            
+        Returns:
+            tuple: (action, log_prob)
+                - action (int): Sampled action (0 or 1)
+                - log_prob (torch.Tensor): Log probability of the action
+        """
+        # Get action probabilities
+        probs = self.forward(state)
+        
+        # Sample action from distribution
+        dist = torch.distributions.Categorical(probs)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+        
+        return action.item(), log_prob
+    
+    def get_log_prob(self, state, action):
+        """
+        Compute log probability of a specific action.
+        
+        Used during policy gradient updates.
+        
+        Args:
+            state (torch.Tensor): State, shape (4,) or (batch, 4)
+            action (torch.Tensor): Action, shape () or (batch,)
+            
+        Returns:
+            torch.Tensor: Log probability of the action
+        """
+        probs = self.forward(state)
+        dist = torch.distributions.Categorical(probs)
+        return dist.log_prob(action)
+    
+    def count_parameters(self):
+        """
+        Count total trainable parameters (quantum + hybrid).
+        
+        Returns:
+            int: Total number of parameters
+        """
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
 
