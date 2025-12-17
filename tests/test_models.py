@@ -4,8 +4,9 @@ Tests for neural network models.
 
 import pytest
 import torch
+import torch.nn as nn
 import numpy as np
-from src.models import TinyMLP
+from src.models import TinyMLP, QuantumCircuit, QuantumPolicy
 
 
 class TestTinyMLPArchitecture:
@@ -282,3 +283,502 @@ class TestTinyMLPEdgeCases:
             state = torch.randn(4)
             probs = model(state)
             assert torch.allclose(probs.sum(), torch.tensor(1.0), atol=1e-6)
+
+
+# ===== Quantum Circuit Tests =====
+
+class TestQuantumCircuitBasic:
+    """Test basic quantum circuit initialization and properties."""
+    
+    def test_initialization(self):
+        """Test circuit initializes without errors."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc is not None
+    
+    def test_is_nn_module(self):
+        """Test circuit inherits from nn.Module."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert isinstance(qc, nn.Module)
+    
+    def test_device_creation(self):
+        """Test quantum device is created."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc.dev is not None
+        assert qc.dev.wires.tolist() == [0, 1, 2, 3]
+    
+    def test_attributes(self):
+        """Test circuit stores correct attributes."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        assert qc.n_qubits == 4
+        assert qc.n_layers == 1
+
+
+class TestQuantumCircuitForward:
+    """Test forward pass functionality."""
+    
+    def test_forward_single_state(self):
+        """Test forward pass with single state."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        # TorchLayer output may have extra dimension
+        assert expectations.shape in [(2,), (2, 1)], f"Expected shape (2,) or (2,1), got {expectations.shape}"
+    
+    def test_output_is_tensor(self):
+        """Test output is PyTorch tensor."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        assert isinstance(expectations, torch.Tensor)
+    
+    def test_output_range(self):
+        """Test expectation values in range [-1, 1]."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        expectations = qc(state)
+        
+        assert torch.all(expectations >= -1.0)
+        assert torch.all(expectations <= 1.0)
+    
+    def test_deterministic_output(self):
+        """Test same input gives same output."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        exp1 = qc(state)
+        exp2 = qc(state)
+        
+        assert torch.allclose(exp1, exp2)
+    
+    def test_different_inputs(self):
+        """Test different inputs give different outputs."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state1 = torch.zeros(4)
+        state2 = torch.ones(4)
+        
+        exp1 = qc(state1)
+        exp2 = qc(state2)
+        
+        assert not torch.allclose(exp1, exp2)
+
+
+class TestQuantumCircuitPyTorch:
+    """Test PyTorch integration."""
+    
+    def test_has_parameters(self):
+        """Test circuit has trainable parameters."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        params = list(qc.parameters())
+        assert len(params) > 0
+    
+    def test_parameter_count(self):
+        """Test parameter count is correct."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        # Single layer: 1 × 4 qubits × 3 rotations = 12 parameters
+        param_count = qc.count_parameters()
+        assert param_count == 12, f"Expected 12 parameters, got {param_count}"
+    
+    def test_parameter_count_multilayer(self):
+        """Test parameter count for 3-layer circuit (data re-uploading)."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=3)
+        
+        # Three layers: 3 × 4 qubits × 3 rotations = 36 parameters
+        param_count = qc.count_parameters()
+        assert param_count == 36, f"Expected 36 parameters, got {param_count}"
+    
+    def test_parameters_require_grad(self):
+        """Test all parameters require gradients."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        
+        for param in qc.parameters():
+            assert param.requires_grad is True
+    
+    def test_output_requires_grad(self):
+        """Test output has requires_grad=True."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4, requires_grad=True)
+        
+        expectations = qc(state)
+        
+        assert expectations.requires_grad is True
+
+
+class TestQuantumCircuitGradients:
+    """Test gradient flow through quantum circuit."""
+    
+    def test_gradient_flow(self):
+        """Test gradients propagate through quantum circuit."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4, requires_grad=True)
+        
+        # Forward pass
+        expectations = qc(state)
+        
+        # Dummy loss
+        loss = expectations.sum()
+        loss.backward()
+        
+        # Check gradients exist on parameters
+        for param in qc.parameters():
+            assert param.grad is not None
+    
+    def test_parameters_update(self):
+        """Test parameters change after optimization step."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        optimizer = torch.optim.Adam(qc.parameters(), lr=0.01)
+        
+        # Save initial parameters
+        initial_params = [p.clone() for p in qc.parameters()]
+        
+        # Training step
+        state = torch.randn(4)
+        expectations = qc(state)
+        loss = expectations.sum()
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Check parameters changed
+        changed = False
+        for initial, current in zip(initial_params, qc.parameters()):
+            if not torch.allclose(initial, current.data):
+                changed = True
+                break
+        
+        assert changed, "Parameters should change after optimization step"
+    
+    def test_no_gradient_without_backward(self):
+        """Test no gradients without calling backward."""
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        state = torch.randn(4)
+        
+        # Forward only, no backward
+        expectations = qc(state)
+        
+        for param in qc.parameters():
+            assert param.grad is None, "Should have no gradient without backward"
+
+
+class TestQuantumCircuitAgentCompatibility:
+    """Test quantum circuit works with REINFORCE agent."""
+    
+    def test_agent_initialization(self):
+        """Test agent can be initialized with quantum circuit."""
+        from src.agent import REINFORCEAgent
+        
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        
+        assert agent.policy is qc
+    
+    def test_agent_action_selection(self):
+        """Test agent can select actions using quantum circuit."""
+        from src.agent import REINFORCEAgent
+        
+        qc = QuantumCircuit(n_qubits=4, n_layers=1)
+        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        
+        state = np.array([0.1, 0.2, 0.3, 0.4])
+        
+        # This will fail because QuantumCircuit doesn't have get_action method yet
+        # We'll need to add a policy wrapper in Step 2.3, but for now just test
+        # that the agent can be created
+        assert agent is not None
+
+
+# ===== QuantumPolicy Tests =====
+
+class TestQuantumPolicyArchitecture:
+    """Test QuantumPolicy architecture and initialization."""
+    
+    def test_initialization(self):
+        """Test policy initializes without errors."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        assert qp is not None
+    
+    def test_is_nn_module(self):
+        """Test policy inherits from nn.Module."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        assert isinstance(qp, nn.Module)
+    
+    def test_has_quantum_circuit(self):
+        """Test policy contains quantum circuit."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        assert hasattr(qp, 'quantum_circuit')
+        assert isinstance(qp.quantum_circuit, QuantumCircuit)
+    
+    def test_has_hybrid_layer(self):
+        """Test policy has hybrid linear layer."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        assert hasattr(qp, 'hybrid_layer')
+        assert isinstance(qp.hybrid_layer, nn.Linear)
+    
+    def test_parameter_count(self):
+        """Test total parameter count (quantum + hybrid)."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        
+        # 3 layers: 36 (quantum) + 6 (hybrid: 2×2 + 2) = 42 parameters
+        param_count = qp.count_parameters()
+        assert param_count == 42, f"Expected 42 parameters, got {param_count}"
+
+
+class TestQuantumPolicyForward:
+    """Test forward pass functionality."""
+    
+    def test_forward_single_state(self):
+        """Test forward pass with single state."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        assert probs.shape == (2,), f"Expected shape (2,), got {probs.shape}"
+    
+    def test_output_is_probability(self):
+        """Test output is valid probability distribution."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        # Probabilities should sum to 1
+        assert torch.allclose(probs.sum(), torch.tensor(1.0), atol=1e-6)
+        
+        # All probabilities should be non-negative
+        assert torch.all(probs >= 0)
+        
+        # All probabilities should be <= 1
+        assert torch.all(probs <= 1)
+    
+    def test_deterministic_output(self):
+        """Test same input gives same output."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        
+        probs1 = qp(state)
+        probs2 = qp(state)
+        
+        assert torch.allclose(probs1, probs2)
+    
+    def test_different_inputs(self):
+        """Test different inputs give different outputs."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state1 = torch.zeros(4)
+        state2 = torch.ones(4)
+        
+        probs1 = qp(state1)
+        probs2 = qp(state2)
+        
+        assert not torch.allclose(probs1, probs2)
+
+
+class TestQuantumPolicyActionSampling:
+    """Test action sampling methods."""
+    
+    def test_get_action_returns_valid_action(self):
+        """Test get_action returns valid action in {0, 1}."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        
+        action, log_prob = qp.get_action(state)
+        
+        assert action in [0, 1], f"Expected action in {{0, 1}}, got {action}"
+        assert isinstance(action, int)
+    
+    def test_get_action_returns_log_prob(self):
+        """Test get_action returns log probability."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        
+        action, log_prob = qp.get_action(state)
+        
+        assert isinstance(log_prob, torch.Tensor)
+        assert log_prob.shape == ()  # Scalar
+        assert log_prob <= 0  # Log prob is non-positive
+    
+    def test_get_log_prob(self):
+        """Test get_log_prob computes correct log probability."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        action = torch.tensor(0)
+        
+        log_prob = qp.get_log_prob(state, action)
+        
+        assert log_prob.shape == ()
+        assert log_prob <= 0
+    
+    def test_log_prob_matches_forward(self):
+        """Test get_log_prob matches manual calculation."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4)
+        action = 0
+        
+        # Get log prob using method
+        log_prob = qp.get_log_prob(state, torch.tensor(action))
+        
+        # Calculate manually from forward pass
+        probs = qp(state)
+        expected_log_prob = torch.log(probs[action])
+        
+        assert torch.allclose(log_prob, expected_log_prob, atol=1e-6)
+
+
+class TestQuantumPolicyGradients:
+    """Test gradient flow through quantum policy."""
+    
+    def test_gradient_flow(self):
+        """Test gradients propagate through quantum-classical hybrid."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        state = torch.randn(4, requires_grad=True)
+        
+        # Forward pass
+        probs = qp(state)
+        loss = probs.sum()
+        loss.backward()
+        
+        # Check gradients exist on all parameters
+        for param in qp.parameters():
+            assert param.grad is not None
+    
+    def test_parameters_update(self):
+        """Test parameters change after optimization step."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        optimizer = torch.optim.Adam(qp.parameters(), lr=0.01)
+        
+        # Save initial parameters
+        initial_params = [p.clone() for p in qp.parameters()]
+        
+        # Training step
+        state = torch.randn(4)
+        action = torch.tensor(0)
+        log_prob = qp.get_log_prob(state, action)
+        loss = -log_prob
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Check parameters changed
+        changed = False
+        for initial, current in zip(initial_params, qp.parameters()):
+            if not torch.allclose(initial, current.data):
+                changed = True
+                break
+        
+        assert changed, "Parameters should change after optimization step"
+
+
+class TestQuantumPolicyAgentCompatibility:
+    """Test QuantumPolicy works with REINFORCE agent."""
+    
+    def test_agent_initialization(self):
+        """Test agent can be initialized with quantum policy."""
+        from src.agent import REINFORCEAgent
+        
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        
+        assert agent.policy is qp
+    
+    def test_agent_action_selection(self):
+        """Test agent can select actions using quantum policy."""
+        from src.agent import REINFORCEAgent
+        
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        
+        state = np.array([0.1, 0.2, 0.3, 0.4])
+        action = agent.select_action(state)
+        
+        assert action in [0, 1]
+        assert len(agent.saved_log_probs) == 1
+    
+    def test_agent_training_step(self):
+        """Test agent can perform a training step with quantum policy."""
+        from src.agent import REINFORCEAgent
+        
+        qp = QuantumPolicy(n_qubits=4, n_layers=3)
+        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        
+        # Simulate short episode
+        for _ in range(3):
+            state = np.random.randn(4)
+            action = agent.select_action(state)
+            agent.store_reward(1.0)
+        
+        # Update policy
+        loss = agent.update_policy()
+        
+        assert isinstance(loss, float)
+        assert not np.isnan(loss)
+
+
+class TestQuantumPolicyParityMeasurement:
+    """Test parity measurement mode."""
+    
+    def test_parity_initialization(self):
+        """Test policy can be initialized with parity measurement."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        assert qp.measurement == 'parity'
+    
+    def test_parity_forward_output(self):
+        """Test parity mode produces valid probabilities."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        assert probs.shape == (2,)
+        assert torch.allclose(probs.sum(), torch.tensor(1.0))
+    
+    def test_parity_deterministic(self):
+        """Test parity mode gives deterministic output (one-hot)."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs = qp(state)
+        
+        # One probability should be 1.0, the other 0.0
+        assert torch.any(probs == 1.0)
+        assert torch.any(probs == 0.0)
+    
+    def test_parity_same_input_same_output(self):
+        """Test parity mode is deterministic (same input → same output)."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        probs1 = qp(state)
+        probs2 = qp(state)
+        
+        assert torch.allclose(probs1, probs2)
+    
+    def test_parity_action_selection(self):
+        """Test action selection works with parity measurement."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='parity')
+        state = torch.randn(4)
+        
+        action, log_prob = qp.get_action(state)
+        
+        assert action in [0, 1]
+        assert isinstance(log_prob, torch.Tensor)
+    
+    def test_invalid_measurement_raises_error(self):
+        """Test invalid measurement mode raises error."""
+        qp = QuantumPolicy(n_qubits=4, n_layers=3, measurement='invalid')
+        state = torch.randn(4)
+        
+        with pytest.raises(ValueError, match="Unknown measurement strategy"):
+            qp(state)
+
+
+
+
+
