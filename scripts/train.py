@@ -71,8 +71,30 @@ def train_classical(args):
     # Create environment
     env = create_env()
     
-    # Train
-    stats = agent.train(num_episodes=args.episodes, env=env, verbose=True)
+    # Setup periodic saving callback
+    def save_checkpoint_callback(episode, stats):
+        """Save intermediate results every 50 episodes."""
+        import json
+        import os
+        
+        # Save rewards incrementally
+        results_dir = Path('results') / args.mode
+        results_dir.mkdir(parents=True, exist_ok=True)
+        rewards_path = results_dir / f'seed{args.seed}_rewards.json'
+        
+        # Atomic write to prevent corruption
+        temp_path = str(rewards_path) + ".tmp"
+        with open(temp_path, 'w') as f:
+            json.dump({
+                "rewards": stats.episode_rewards,
+                "num_episodes": episode
+            }, f, indent=2)
+        os.replace(temp_path, rewards_path)
+        print(f"  [Checkpoint saved: episode {episode}]")
+    
+    # Train with periodic checkpointing
+    stats = agent.train(num_episodes=args.episodes, env=env, verbose=True, 
+                        save_callback=save_checkpoint_callback)
     
     # Save results
     save_training_results(stats.episode_rewards, args.seed, args.mode)
@@ -112,12 +134,34 @@ def train_quantum(args):
     # Create environment
     env = create_env()
     
+    # Setup periodic saving callback
+    def save_checkpoint_callback(episode, stats):
+        """Save intermediate results every 50 episodes."""
+        import json
+        import os
+        
+        # Save rewards incrementally
+        results_dir = Path('results') / args.mode
+        results_dir.mkdir(parents=True, exist_ok=True)
+        rewards_path = results_dir / f'seed{args.seed}_rewards.json'
+        
+        # Atomic write to prevent corruption
+        temp_path = str(rewards_path) + ".tmp"
+        with open(temp_path, 'w') as f:
+            json.dump({
+                "rewards": stats.episode_rewards,
+                "num_episodes": episode
+            }, f, indent=2)
+        os.replace(temp_path, rewards_path)
+        print(f"  [Checkpoint saved: episode {episode}]")
+    
     # Train
     print(f"Starting training with {args.diff_method} gradients...")
     if args.diff_method == 'parameter-shift':
         print("WARNING: Parameter-shift is slow. Consider using backprop for prototyping.")
     
-    stats = agent.train(num_episodes=args.episodes, env=env, verbose=True)
+    stats = agent.train(num_episodes=args.episodes, env=env, verbose=True,
+                        save_callback=save_checkpoint_callback)
     
     # Save results
     save_training_results(stats.episode_rewards, args.seed, args.mode)

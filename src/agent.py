@@ -174,7 +174,7 @@ class REINFORCEAgent:
         
         return total_reward, episode_length, loss
     
-    def train(self, num_episodes, env=None, verbose=True):
+    def train(self, num_episodes, env=None, verbose=True, save_callback=None):
         """
         Train agent for multiple episodes.
         
@@ -182,6 +182,8 @@ class REINFORCEAgent:
             num_episodes (int): Number of episodes to train
             env: Environment (created if None)
             verbose (bool): Print progress
+            save_callback (callable): Optional callback for periodic saving
+                                     Called with (episode_num, stats) every 50 episodes
             
         Returns:
             EpisodeStats: Training statistics
@@ -206,6 +208,10 @@ class REINFORCEAgent:
                 print(f"Episode {episode + 1}/{num_episodes} | "
                       f"Avg Reward (50 ep): {avg_reward:.1f} | "
                       f"Loss: {loss:.4f}")
+            
+            # Periodic checkpoint saving (every 50 episodes)
+            if save_callback and (episode + 1) % 50 == 0:
+                save_callback(episode + 1, stats)
         
         return stats
     
