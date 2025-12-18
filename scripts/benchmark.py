@@ -301,7 +301,15 @@ def compute_statistical_tests(classical_results, quantum_results):
     
     # Effect size (Cohen's d for paired samples)
     differences = np.array(quantum_final) - np.array(classical_final)
-    cohens_d = np.mean(differences) / np.std(differences, ddof=1)
+    diff_std = np.std(differences, ddof=1)
+    
+    # Handle edge case: if std is 0, all differences are identical
+    if diff_std == 0:
+        # If mean is also 0, there's no difference (d = 0)
+        # If mean is non-zero, effect is infinite (use large value)
+        cohens_d = 0.0 if np.mean(differences) == 0 else np.inf
+    else:
+        cohens_d = np.mean(differences) / diff_std
     
     results = {
         'test_type': 'paired_t_test',
