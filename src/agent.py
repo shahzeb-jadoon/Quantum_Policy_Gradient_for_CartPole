@@ -1,12 +1,19 @@
 """
-REINFORCE agent for policy gradient reinforcement learning.
+REINFORCE agent for policy gradient training.
 
-This module implements the Monte Carlo Policy Gradient algorithm (REINFORCE)
-for training policy networks on CartPole.
+Implements vanilla policy gradient algorithm with:
+- Return normalization for training stability
+- Gradient clipping to prevent explosions
+- Barren plateau detection for quantum circuits
+- Adaptive learning rate scheduling
+- Progress monitoring with tqdm
 """
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
+import warnings
+from tqdm import tqdm
 import numpy as np
 from src.env_wrapper import create_env, normalize_state, EpisodeStats
 
@@ -25,26 +32,47 @@ class REINFORCEAgent:
         where G_t is the return from timestep t
     """
     
-    def __init__(self, policy, lr=0.01, gamma=0.99):
+    def __init__(self, model, lr=0.01, gamma=0.99, grad_clip=1.0, 
+                 use_scheduler=True):
         """
         Initialize REINFORCE agent.
         
         Args:
-            policy: Policy network (e.g., TinyMLP)
-            lr (float): Learning rate for optimizer
-            gamma (float): Discount factor for returns
+            model: Policy network (TinyMLP or QuantumPolicy)
+            lr: Learning rate for optimizer
+            gamma: Discount factor for returns
+            grad_clip: Maximum gradient norm (None to disable)
+            use_scheduler: Whether to use adaptive learning rate
         """
-        self.policy = policy
-        self.optimizer = optim.Adam(policy.parameters(), lr=lr)
+        self.model = model
+        self.optimizer = optim.Adam(model.parameters(), lr=lr)
         self.gamma = gamma
+        self.lr = lr
+        self.grad_clip = grad_clip
+        self.use_scheduler = use_scheduler
         
-        # Storage for episode data
+        # Adaptive learning rate scheduler
+        if use_scheduler:
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='max',
+                factor=0.5,
+                patience=50,
+                threshold=1e-4
+            )
+        else:
+            self.scheduler = None
+        
+        # Episode history buffers
         self.saved_log_probs = []
         self.rewards = []
+        
+        # Gradient monitoring
+        self.grad_norms = []
     
     def select_action(self, state):
         """
-        Select action from policy and save log probability.
+        Select action from current policy.
         
         Args:
             state (np.ndarray): Environment state
@@ -56,7 +84,7 @@ class REINFORCEAgent:
         state_tensor = torch.FloatTensor(state)
         
         # Get action from policy
-        action, log_prob = self.policy.get_action(state_tensor)
+        action, log_prob = self.model.get_action(state_tensor)
         
         # Save log probability for later update
         self.saved_log_probs.append(log_prob)
@@ -99,38 +127,82 @@ class REINFORCEAgent:
         
         return returns
     
-    def update_policy(self):
+    def get_gradient_norm(self):
         """
-        Update policy using collected episode data.
-        
-        Implements the REINFORCE update:
-            loss = -Σ log π(a_t|s_t) * G_t
+        Compute L2 norm of model gradients.
         
         Returns:
-            float: Policy loss value
+            float: Total gradient norm
+        """
+        total_norm = 0.0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        return total_norm ** 0.5
+    
+    def check_barren_plateau(self, grad_norm, threshold=1e-6):
+        """
+        Detect barren plateau (vanishing gradients).
+        
+        Args:
+            grad_norm: Current gradient norm
+            threshold: Minimum acceptable gradient norm
+            
+        Returns:
+            tuple: (is_plateau, warning_message)
+        """
+        if grad_norm < threshold:
+            msg = f"Barren Plateau detected: gradient norm {grad_norm:.2e} < {threshold:.2e}"
+            return True, msg
+        return False, None
+    
+    def update_policy(self):
+        """
+        Update policy using REINFORCE algorithm.
+        
+        Includes gradient clipping and barren plateau detection.
+        
+        Returns:
+            tuple: (loss, grad_norm)
         """
         # Compute returns
         returns = self.compute_returns()
         
-        # Compute policy loss
+        # Compute policy gradient loss
         policy_loss = []
-        for log_prob, G in zip(self.saved_log_probs, returns):
-            # Negative because we want to maximize reward (minimize negative reward)
-            policy_loss.append(-log_prob * G)
+        for log_prob, R in zip(self.saved_log_probs, returns):
+            policy_loss.append(-log_prob * R)
         
-        # Sum losses across all timesteps
-        policy_loss = torch.stack(policy_loss).sum()
+        # Combine into single loss
+        loss = torch.stack(policy_loss).sum()
         
-        # Optimize
+        # Backpropagation
         self.optimizer.zero_grad()
-        policy_loss.backward()
+        loss.backward()
+        
+        # Gradient clipping
+        if self.grad_clip is not None:
+            nn.utils.clip_grad_norm_(
+                self.model.parameters(), 
+                self.grad_clip
+            )
+        
+        # Monitor gradient norm
+        grad_norm = self.get_gradient_norm()
+        self.grad_norms.append(grad_norm)
+        
+        # Check for barren plateau
+        is_plateau, warning = self.check_barren_plateau(grad_norm)
+        if is_plateau:
+            warnings.warn(warning)
+        
         self.optimizer.step()
         
-        # Clear episode data
-        self.saved_log_probs = []
-        self.rewards = []
+        # Clear episode history
+        del self.saved_log_probs[:]
+        del self.rewards[:]
         
-        return policy_loss.item()
+        return loss.item(), grad_norm
     
     def train_episode(self, env, seed=None):
         """
@@ -141,7 +213,7 @@ class REINFORCEAgent:
             seed: Optional random seed for environment reset
             
         Returns:
-            tuple: (total_reward, episode_length, loss)
+            float: total_reward for the episode
         """
         if seed is not None:
             state, _ = env.reset(seed=seed)
@@ -173,53 +245,78 @@ class REINFORCEAgent:
             
             state = next_state
         
-        # Update policy at end of episode
-        loss = self.update_policy()
-        
-        return total_reward, episode_length, loss
+        return total_reward
     
-    def train(self, num_episodes, env=None, verbose=True, save_callback=None, seed=None):
+    def train(self, env, episodes=500, log_interval=50, 
+              save_callback=None, seed=None, start_episode=0):
         """
-        Train agent for multiple episodes.
+        Train agent for specified number of episodes.
         
         Args:
-            num_episodes (int): Number of episodes to train
-            env: Environment (created if None)
-            verbose (bool): Print progress
-            save_callback (callable): Optional callback for periodic saving
-                                     Called with (episode_num, stats) every 50 episodes
-            seed (int): Optional base seed for environment resets (episode i gets seed+i)
-            
+            env: Gymnasium environment
+            episodes: Number of training episodes
+            log_interval: Episodes between status updates
+            save_callback: Optional callback for periodic saving
+            seed: Base random seed for reproducibility
+            start_episode: Episode number to resume from
+        
         Returns:
-            EpisodeStats: Training statistics
+            list: Episode rewards
         """
-        if env is None:
-            env = create_env()
+        episode_rewards = []
         
-        stats = EpisodeStats()
+        # Progress bar
+        pbar = tqdm(
+            range(start_episode, episodes),
+            desc="Training",
+            unit="ep",
+            initial=start_episode,
+            total=episodes
+        )
         
-        for episode in range(num_episodes):
-            # Train one episode (seed each episode deterministically if base seed provided)
+        for episode in pbar:
+            # Deterministic episode seeding
             episode_seed = None if seed is None else seed + episode
-            reward, length, loss = self.train_episode(env, seed=episode_seed)
             
-            # Update statistics
-            stats.current_episode_reward = reward
-            stats.current_episode_length = length
-            stats.end_episode()
+            # Run episode
+            episode_reward = self.train_episode(env, seed=episode_seed)
+            episode_rewards.append(episode_reward)
             
-            # Print progress
-            if verbose and (episode + 1) % 50 == 0:
-                avg_reward = stats.get_recent_average(n=50)
-                print(f"Episode {episode + 1}/{num_episodes} | "
-                      f"Avg Reward (50 ep): {avg_reward:.1f} | "
-                      f"Loss: {loss:.4f}")
+            # Update policy
+            loss, grad_norm = self.update_policy()
             
-            # Periodic checkpoint saving (every 50 episodes)
-            if save_callback and (episode + 1) % 50 == 0:
-                save_callback(episode + 1, stats)
+            # Update learning rate if using scheduler
+            if self.scheduler is not None:
+                avg_reward = sum(episode_rewards[-100:]) / min(len(episode_rewards), 100)
+                self.scheduler.step(avg_reward)
+            
+            # Get current learning rate
+            current_lr = self.optimizer.param_groups[0]['lr']
+            
+            # Update progress bar
+            if len(episode_rewards) >= 50:
+                recent_avg = sum(episode_rewards[-50:]) / 50
+                pbar.set_postfix({
+                    'reward': f'{episode_reward:.1f}',
+                    'avg_50': f'{recent_avg:.1f}',
+                    'loss': f'{loss:.4f}',
+                    'lr': f'{current_lr:.6f}'
+                })
+            
+            # Periodic logging
+            if (episode + 1) % log_interval == 0:
+                avg_reward = sum(episode_rewards[-log_interval:]) / log_interval
+                print(f"\nEpisode {episode + 1}/{episodes} | "
+                      f"Avg Reward ({log_interval} ep): {avg_reward:.1f} | "
+                      f"Loss: {loss:.4f} | "
+                      f"Grad Norm: {grad_norm:.4f} | "
+                      f"LR: {current_lr:.6f}")
+                # Periodic checkpoint saving
+                if save_callback is not None:
+                    save_callback(episode + 1, episode_rewards)
         
-        return stats
+        pbar.close()
+        return episode_rewards
     
     def evaluate(self, env=None, num_episodes=100):
         """
@@ -247,7 +344,7 @@ class REINFORCEAgent:
                 
                 # Greedy action (no exploration)
                 with torch.no_grad():
-                    probs = self.policy(state_tensor)
+                    probs = self.model(state_tensor)
                     action = torch.argmax(probs).item()
                 
                 next_state, reward, terminated, truncated, _ = env.step(action)

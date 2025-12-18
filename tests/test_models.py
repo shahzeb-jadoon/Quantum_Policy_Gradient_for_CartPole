@@ -475,16 +475,16 @@ class TestQuantumCircuitAgentCompatibility:
         from src.agent import REINFORCEAgent
         
         qc = QuantumCircuit(n_qubits=4, n_layers=1)
-        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        agent = REINFORCEAgent(qc, lr=0.01)
         
-        assert agent.policy is qc
+        assert agent.model is qc
     
     def test_agent_action_selection(self):
         """Test agent can select actions using quantum circuit."""
         from src.agent import REINFORCEAgent
         
         qc = QuantumCircuit(n_qubits=4, n_layers=1)
-        agent = REINFORCEAgent(policy=qc, lr=0.01)
+        agent = REINFORCEAgent(qc, lr=0.01)
         
         state = np.array([0.1, 0.2, 0.3, 0.4])
         
@@ -684,16 +684,16 @@ class TestQuantumPolicyAgentCompatibility:
         from src.agent import REINFORCEAgent
         
         qp = QuantumPolicy(n_qubits=4, n_layers=3)
-        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        agent = REINFORCEAgent(qp, lr=0.01)
         
-        assert agent.policy is qp
+        assert agent.model is qp
     
     def test_agent_action_selection(self):
         """Test agent can select actions using quantum policy."""
         from src.agent import REINFORCEAgent
         
         qp = QuantumPolicy(n_qubits=4, n_layers=3)
-        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        agent = REINFORCEAgent(qp, lr=0.01)
         
         state = np.array([0.1, 0.2, 0.3, 0.4])
         action = agent.select_action(state)
@@ -706,7 +706,7 @@ class TestQuantumPolicyAgentCompatibility:
         from src.agent import REINFORCEAgent
         
         qp = QuantumPolicy(n_qubits=4, n_layers=3)
-        agent = REINFORCEAgent(policy=qp, lr=0.01)
+        agent = REINFORCEAgent(qp, lr=0.01)
         
         # Simulate short episode
         for _ in range(3):
@@ -715,9 +715,10 @@ class TestQuantumPolicyAgentCompatibility:
             agent.store_reward(1.0)
         
         # Update policy
-        loss = agent.update_policy()
+        loss, grad_norm = agent.update_policy()
         
         assert isinstance(loss, float)
+        assert isinstance(grad_norm, float)
         assert not np.isnan(loss)
 
 

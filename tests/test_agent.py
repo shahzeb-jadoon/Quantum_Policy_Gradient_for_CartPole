@@ -18,9 +18,11 @@ class TestREINFORCEInitialization:
         policy = TinyMLP()
         agent = REINFORCEAgent(policy, lr=0.01, gamma=0.99)
         
-        assert agent.policy is policy
+        assert agent.model is policy
         assert agent.gamma == 0.99
         assert agent.optimizer is not None
+        assert agent.grad_clip == 1.0  # Default value
+        assert agent.scheduler is not None  # use_scheduler=True by default
     
     def test_custom_parameters(self):
         """Test initialization with custom parameters."""
@@ -193,7 +195,7 @@ class TestPolicyUpdate:
         assert agent.rewards == []
     
     def test_update_policy_returns_loss(self):
-        """Test update_policy returns loss value."""
+        """Test update_policy returns loss and gradient norm."""
         policy = TinyMLP()
         agent = REINFORCEAgent(policy)
         
@@ -204,10 +206,12 @@ class TestPolicyUpdate:
             agent.saved_log_probs.append(log_prob)
             agent.rewards.append(1.0)
         
-        loss = agent.update_policy()
+        loss, grad_norm = agent.update_policy()
         
         assert isinstance(loss, float)
         assert not np.isnan(loss)
+        assert isinstance(grad_norm, float)
+        assert grad_norm >= 0
     
     def test_update_updates_parameters(self):
         """Test policy parameters change after update."""
@@ -246,13 +250,11 @@ class TestTrainingEpisode:
         agent = REINFORCEAgent(policy)
         env = create_env()
         
-        reward, length, loss = agent.train_episode(env)
+        # train_episode now calls update_policy internally and only returns reward
+        reward = agent.train_episode(env)
         
         assert isinstance(reward, (int, float))
-        assert isinstance(length, int)
-        assert isinstance(loss, float)
-        assert length > 0
-        assert reward > 0  # CartPole always gives +1 reward per step
+        assert reward >= 0  # CartPole always gives non-negative reward
     
     def test_train_episode_clears_storage(self):
         """Test episode data cleared after training."""
@@ -262,7 +264,13 @@ class TestTrainingEpisode:
         
         agent.train_episode(env)
         
-        # Storage should be empty after episode
+        # train_episode collects data but doesn't update
+        # Storage is cleared by update_policy() which is called in train()
+        assert len(agent.saved_log_probs) > 0  # Should have collected data
+        assert len(agent.rewards) > 0  # Should have collected rewards
+        
+        # Now call update_policy to clear storage
+        agent.update_policy()
         assert agent.saved_log_probs == []
         assert agent.rewards == []
     
@@ -272,10 +280,11 @@ class TestTrainingEpisode:
         agent = REINFORCEAgent(policy)
         env = create_env()
         
-        reward, length, _ = agent.train_episode(env)
+        # train_episode now only returns reward
+        reward = agent.train_episode(env)
         
-        # In CartPole, reward = +1 per step, so total reward = length
-        assert reward == length
+        # Reward should be positive in CartPole
+        assert reward > 0
 
 
 class TestTraining:
@@ -286,24 +295,28 @@ class TestTraining:
         policy = TinyMLP()
         agent = REINFORCEAgent(policy)
         
-        stats = agent.train(num_episodes=5, verbose=False)
+        # train now returns list of rewards
+        env = create_env()
+        rewards = agent.train(env, episodes=5, log_interval=10)
         
-        assert len(stats.episode_rewards) == 5
-        assert len(stats.episode_lengths) == 5
+        assert len(rewards) == 5
+        assert all(isinstance(r, (int, float)) for r in rewards)
     
     def test_train_improves_performance(self):
         """Test agent improves with training (stochastic test)."""
         policy = TinyMLP()
-        agent = REINFORCEAgent(policy, lr=0.01)
+        env = create_env()
+        # Disable scheduler for this test to avoid LR changes
+        agent = REINFORCEAgent(policy, lr=0.01, use_scheduler=False)
         
         # Train for 50 episodes
-        stats = agent.train(num_episodes=50, verbose=False)
+        rewards = agent.train(env, episodes=50, log_interval=10)
         
         # Early performance (first 10 episodes)
-        early_avg = np.mean(stats.episode_rewards[:10])
+        early_avg = np.mean(rewards[:10])
         
         # Late performance (last 10 episodes)
-        late_avg = np.mean(stats.episode_rewards[-10:])
+        late_avg = np.mean(rewards[-10:])
         
         # Agent should improve (this might occasionally fail due to randomness)
         # Use a lenient threshold
@@ -328,18 +341,19 @@ class TestEvaluation:
     def test_evaluate_deterministic(self):
         """Test evaluation uses greedy actions (deterministic)."""
         policy = TinyMLP()
-        agent = REINFORCEAgent(policy)
+        env = create_env()
+        agent = REINFORCEAgent(policy, use_scheduler=False)
         
         # Train briefly to get consistent policy
-        agent.train(num_episodes=10, verbose=False)
+        agent.train(env, episodes=10, log_interval=10)
         
         # Evaluate multiple times - should give similar results
         rewards1 = []
         rewards2 = []
         
         for _ in range(5):
-            mean1, _ = agent.evaluate(num_episodes=5)
-            mean2, _ = agent.evaluate(num_episodes=5)
+            mean1, _ = agent.evaluate(env, num_episodes=5)
+            mean2, _ = agent.evaluate(env, num_episodes=5)
             rewards1.append(mean1)
             rewards2.append(mean2)
         
