@@ -132,17 +132,21 @@ class REINFORCEAgent:
         
         return policy_loss.item()
     
-    def train_episode(self, env):
+    def train_episode(self, env, seed=None):
         """
         Run one full training episode.
         
         Args:
             env: Gymnasium environment
+            seed: Optional random seed for environment reset
             
         Returns:
             tuple: (total_reward, episode_length, loss)
         """
-        state, _ = env.reset()
+        if seed is not None:
+            state, _ = env.reset(seed=seed)
+        else:
+            state, _ = env.reset()
         total_reward = 0
         episode_length = 0
         
@@ -174,7 +178,7 @@ class REINFORCEAgent:
         
         return total_reward, episode_length, loss
     
-    def train(self, num_episodes, env=None, verbose=True):
+    def train(self, num_episodes, env=None, verbose=True, save_callback=None, seed=None):
         """
         Train agent for multiple episodes.
         
@@ -182,6 +186,9 @@ class REINFORCEAgent:
             num_episodes (int): Number of episodes to train
             env: Environment (created if None)
             verbose (bool): Print progress
+            save_callback (callable): Optional callback for periodic saving
+                                     Called with (episode_num, stats) every 50 episodes
+            seed (int): Optional base seed for environment resets (episode i gets seed+i)
             
         Returns:
             EpisodeStats: Training statistics
@@ -192,8 +199,9 @@ class REINFORCEAgent:
         stats = EpisodeStats()
         
         for episode in range(num_episodes):
-            # Train one episode
-            reward, length, loss = self.train_episode(env)
+            # Train one episode (seed each episode deterministically if base seed provided)
+            episode_seed = None if seed is None else seed + episode
+            reward, length, loss = self.train_episode(env, seed=episode_seed)
             
             # Update statistics
             stats.current_episode_reward = reward
@@ -206,6 +214,10 @@ class REINFORCEAgent:
                 print(f"Episode {episode + 1}/{num_episodes} | "
                       f"Avg Reward (50 ep): {avg_reward:.1f} | "
                       f"Loss: {loss:.4f}")
+            
+            # Periodic checkpoint saving (every 50 episodes)
+            if save_callback and (episode + 1) % 50 == 0:
+                save_callback(episode + 1, stats)
         
         return stats
     
