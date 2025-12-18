@@ -96,7 +96,7 @@ def train_classical(args):
     
     # Train with periodic checkpointing
     stats = agent.train(num_episodes=args.episodes, env=env, verbose=True, 
-                        save_callback=save_checkpoint_callback)
+                        save_callback=save_checkpoint_callback, seed=args.seed)
     
     # Save results
     save_training_results(stats.episode_rewards, args.seed, args.mode)
@@ -165,7 +165,7 @@ def train_quantum(args):
         print("WARNING: Parameter-shift is slow. Consider using backprop for prototyping.")
     
     stats = agent.train(num_episodes=args.episodes, env=env, verbose=True,
-                        save_callback=save_checkpoint_callback)
+                        save_callback=save_checkpoint_callback, seed=args.seed)
     
     # Save results
     save_training_results(stats.episode_rewards, args.seed, args.mode)
