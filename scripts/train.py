@@ -227,11 +227,15 @@ def train_quantum(args):
     print(f"Gradient method: {args.diff_method}")
     print(f"{'='*60}\n")
     
-    # Create quantum policy
-    # Note: diff_method is handled by PennyLane's default.qubit device
-    # 'backprop' is automatic for simulators, 'parameter-shift' requires explicit QNode config
-    policy = QuantumPolicy(n_qubits=4, n_layers=args.depth, measurement='softmax')
+    # Create quantum policy with specified differentiation method
+    policy = QuantumPolicy(
+        n_qubits=4, 
+        n_layers=args.depth, 
+        measurement='softmax',
+        diff_method=args.diff_method
+    )
     print(f"Model parameters: {policy.count_parameters()}")
+    print(f"Differentiation method: {args.diff_method}")
     
     # Load from checkpoint if resuming
     start_episode = args.start_episode

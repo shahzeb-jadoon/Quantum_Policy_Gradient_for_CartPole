@@ -56,6 +56,9 @@ def parse_args():
     parser.add_argument('--depth_values', type=int, nargs='+',
                         default=[2, 3],
                         help='Circuit depths to test (quantum only)')
+    parser.add_argument('--diff_method', type=str, default='backprop',
+                        choices=['backprop', 'parameter-shift'],
+                        help='Gradient method for quantum (default: backprop for speed)')
     
     # Output
     parser.add_argument('--output_dir', type=str, default='results/hyperparameter_search',
@@ -92,7 +95,8 @@ def run_single_config(mode, config_dict, episodes, seed):
         model = QuantumPolicy(
             n_qubits=4,
             n_layers=config_dict.get('depth', 3),
-            measurement='softmax'
+            measurement='softmax',
+            diff_method=config_dict.get('diff_method', 'backprop')
         )
     
     # Create agent
@@ -164,7 +168,8 @@ def grid_search(args):
             'lr': args.lr_values,
             'gamma': args.gamma_values,
             'grad_clip': args.grad_clip_values,
-            'depth': args.depth_values
+            'depth': args.depth_values,
+            'diff_method': [args.diff_method]  # Use specified diff_method for all configs
         }
     
     # Create all combinations

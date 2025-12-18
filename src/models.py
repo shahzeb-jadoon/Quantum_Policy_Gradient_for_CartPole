@@ -117,18 +117,20 @@ class QuantumCircuit(nn.Module):
     - Three layers (n_layers=3): 3 × 4 × 3 = 36 parameters
     """
     
-    def __init__(self, n_qubits=4, n_layers=1):
+    def __init__(self, n_qubits=4, n_layers=1, diff_method='backprop'):
         """
         Initialize quantum circuit.
         
         Args:
             n_qubits (int): Number of qubits (default: 4 for CartPole)
             n_layers (int): Number of variational layers (default: 1)
+            diff_method (str): Differentiation method - 'backprop' or 'parameter-shift'
         """
         super(QuantumCircuit, self).__init__()
         
         self.n_qubits = n_qubits
         self.n_layers = n_layers
+        self.diff_method = diff_method
         
         # Create quantum device
         self.dev = qml.device('default.qubit', wires=n_qubits)
@@ -137,8 +139,8 @@ class QuantumCircuit(nn.Module):
         # StronglyEntanglingLayers: (n_layers, n_qubits, 3)
         weight_shapes = {"weights": (n_layers, n_qubits, 3)}
         
-        # Create QNode first, then wrap in TorchLayer
-        qnode = qml.QNode(self._circuit, self.dev)
+        # Create QNode with specified differentiation method
+        qnode = qml.QNode(self._circuit, self.dev, diff_method=diff_method)
         
         # Wrap QNode in TorchLayer for PyTorch compatibility
         self.qlayer = qml.qnn.TorchLayer(qnode, weight_shapes)
@@ -220,7 +222,7 @@ class QuantumPolicy(nn.Module):
     - With L=3 layers: 36 (circuit) + 6 (hybrid: 2×2 weights + 2 biases) = 42 params
     """
     
-    def __init__(self, n_qubits=4, n_layers=3, measurement='softmax'):
+    def __init__(self, n_qubits=4, n_layers=3, measurement='softmax', diff_method='backprop'):
         """
         Initialize quantum policy with hybrid output.
         
@@ -228,14 +230,16 @@ class QuantumPolicy(nn.Module):
             n_qubits (int): Number of qubits (default: 4)
             n_layers (int): Number of data re-uploading layers (default: 3)
             measurement (str): Measurement strategy - 'softmax' or 'parity' (default: 'softmax')
+            diff_method (str): Differentiation method - 'backprop' or 'parameter-shift' (default: 'backprop')
         """
         super(QuantumPolicy, self).__init__()
         
         self.n_qubits = n_qubits
         self.measurement = measurement
+        self.diff_method = diff_method
         
-        # Quantum circuit component
-        self.quantum_circuit = QuantumCircuit(n_qubits=n_qubits, n_layers=n_layers)
+        # Quantum circuit component with specified differentiation method
+        self.quantum_circuit = QuantumCircuit(n_qubits=n_qubits, n_layers=n_layers, diff_method=diff_method)
         
         # Hybrid linear layer: 2 expectations → 2 action logits
         # Only used in softmax mode
