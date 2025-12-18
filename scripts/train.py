@@ -86,7 +86,9 @@ def train_classical(args):
         temp_path = str(rewards_path) + ".tmp"
         with open(temp_path, 'w') as f:
             json.dump({
-                "rewards": stats.episode_rewards,
+                "seed": args.seed,
+                "mode": args.mode,
+                "episode_rewards": stats.episode_rewards,
                 "num_episodes": episode
             }, f, indent=2)
         os.replace(temp_path, rewards_path)
@@ -149,7 +151,9 @@ def train_quantum(args):
         temp_path = str(rewards_path) + ".tmp"
         with open(temp_path, 'w') as f:
             json.dump({
-                "rewards": stats.episode_rewards,
+                "seed": args.seed,
+                "mode": args.mode,
+                "episode_rewards": stats.episode_rewards,
                 "num_episodes": episode
             }, f, indent=2)
         os.replace(temp_path, rewards_path)
