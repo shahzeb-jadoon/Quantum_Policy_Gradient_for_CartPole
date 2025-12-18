@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
+from scipy import stats
+from src.utils import compute_variance_metrics
 
 
 def load_results(results_dir):
@@ -263,6 +265,151 @@ def print_summary(classical_results, quantum_results):
     print("="*70 + "\n")
 
 
+def compute_statistical_tests(classical_results, quantum_results):
+    """
+    Perform automated statistical tests (paired t-test).
+    
+    Args:
+        classical_results: Dict of classical training results
+        quantum_results: Dict of quantum training results
+        
+    Returns:
+        dict: Statistical test results
+    """
+    # Get final 100-episode averages for each seed
+    classical_final = []
+    quantum_final = []
+    
+    # Match seeds
+    common_seeds = sorted(set(classical_results.keys()) & set(quantum_results.keys()))
+    
+    for seed in common_seeds:
+        c_rewards = classical_results[seed]
+        q_rewards = quantum_results[seed]
+        classical_final.append(np.mean(c_rewards[-100:]))
+        quantum_final.append(np.mean(q_rewards[-100:]))
+    
+    if len(common_seeds) < 2:
+        return {
+            'test_type': 'paired_t_test',
+            'n_pairs': len(common_seeds),
+            'error': 'Insufficient paired samples for t-test (need >= 2)'
+        }
+    
+    # Paired t-test
+    t_stat, p_value = stats.ttest_rel(quantum_final, classical_final)
+    
+    # Effect size (Cohen's d for paired samples)
+    differences = np.array(quantum_final) - np.array(classical_final)
+    cohens_d = np.mean(differences) / np.std(differences, ddof=1)
+    
+    results = {
+        'test_type': 'paired_t_test',
+        'n_pairs': len(common_seeds),
+        'common_seeds': common_seeds,
+        'classical_mean': np.mean(classical_final),
+        'classical_std': np.std(classical_final, ddof=1),
+        'quantum_mean': np.mean(quantum_final),
+        'quantum_std': np.std(quantum_final, ddof=1),
+        't_statistic': t_stat,
+        'p_value': p_value,
+        'cohens_d': cohens_d,
+        'mean_difference': np.mean(differences),
+        'significant_05': p_value < 0.05,
+        'significant_01': p_value < 0.01
+    }
+    
+    return results
+
+
+def save_comparison_table(classical_results, quantum_results, stats_test, save_path):
+    """
+    Save comparison metrics table as markdown file.
+    
+    Args:
+        classical_results: Dict of classical results
+        quantum_results: Dict of quantum results
+        stats_test: Statistical test results from compute_statistical_tests()
+        save_path: Path to save markdown file
+    """
+    # Compute variance metrics
+    all_classical = [r for rewards in classical_results.values() for r in rewards]
+    all_quantum = [r for rewards in quantum_results.values() for r in rewards]
+    
+    c_metrics = compute_variance_metrics(all_classical)
+    q_metrics = compute_variance_metrics(all_quantum)
+    
+    # Create markdown table
+    md_content = []
+    md_content.append("# Classical vs Quantum Comparison: CartPole-v1")
+    md_content.append("")
+    md_content.append("## Model Specifications")
+    md_content.append("")
+    md_content.append("| Model | Architecture | Parameters |")
+    md_content.append("|-------|--------------|------------|")
+    md_content.append("| Classical | TinyMLP (4→7→2) | 51 |")
+    md_content.append("| Quantum | VQC + Data Re-uploading (3 layers) | 42 |")
+    md_content.append("")
+    md_content.append("## Performance Metrics")
+    md_content.append("")
+    md_content.append("| Metric | Classical | Quantum |")
+    md_content.append("|--------|-----------|---------|")
+    md_content.append(f"| Number of Seeds | {len(classical_results)} | {len(quantum_results)} |")
+    md_content.append(f"| Mean Reward | {c_metrics['mean']:.2f} | {q_metrics['mean']:.2f} |")
+    md_content.append(f"| Std Dev (sample) | {c_metrics['std']:.2f} | {q_metrics['std']:.2f} |")
+    md_content.append(f"| Median | {c_metrics['median']:.2f} | {q_metrics['median']:.2f} |")
+    md_content.append(f"| Min | {c_metrics['min']:.2f} | {q_metrics['min']:.2f} |")
+    md_content.append(f"| Max | {c_metrics['max']:.2f} | {q_metrics['max']:.2f} |")
+    md_content.append(f"| Q25 | {c_metrics['q25']:.2f} | {q_metrics['q25']:.2f} |")
+    md_content.append(f"| Q75 | {c_metrics['q75']:.2f} | {q_metrics['q75']:.2f} |")
+    md_content.append(f"| Coefficient of Variation | {c_metrics['coefficient_of_variation']:.4f} | {q_metrics['coefficient_of_variation']:.4f} |")
+    md_content.append("")
+    md_content.append("## Statistical Test Results")
+    md_content.append("")
+    
+    if 'error' in stats_test:
+        md_content.append(f"**Error:** {stats_test['error']}")
+    else:
+        md_content.append(f"**Test:** Paired t-test (n={stats_test['n_pairs']} matched seeds)")
+        md_content.append("")
+        md_content.append("| Statistic | Value |")
+        md_content.append("|-----------|-------|")
+        md_content.append(f"| t-statistic | {stats_test['t_statistic']:.4f} |")
+        md_content.append(f"| p-value | {stats_test['p_value']:.4f} |")
+        md_content.append(f"| Cohen's d | {stats_test['cohens_d']:.4f} |")
+        md_content.append(f"| Mean Difference (Q - C) | {stats_test['mean_difference']:.2f} |")
+        md_content.append(f"| Significant (α=0.05) | {'✓ Yes' if stats_test['significant_05'] else '✗ No'} |")
+        md_content.append(f"| Significant (α=0.01) | {'✓ Yes' if stats_test['significant_01'] else '✗ No'} |")
+        md_content.append("")
+        md_content.append("### Interpretation")
+        md_content.append("")
+        if stats_test['significant_05']:
+            direction = "better" if stats_test['mean_difference'] > 0 else "worse"
+            md_content.append(f"The quantum agent performs **statistically significantly {direction}** ")
+            md_content.append(f"than the classical agent (p={stats_test['p_value']:.4f} < 0.05).")
+        else:
+            md_content.append("No statistically significant difference found between quantum and classical agents ")
+            md_content.append(f"(p={stats_test['p_value']:.4f} ≥ 0.05).")
+        md_content.append("")
+        effect_interpretation = (
+            "negligible" if abs(stats_test['cohens_d']) < 0.2 else
+            "small" if abs(stats_test['cohens_d']) < 0.5 else
+            "medium" if abs(stats_test['cohens_d']) < 0.8 else
+            "large"
+        )
+        md_content.append(f"Effect size (Cohen's d = {stats_test['cohens_d']:.2f}): **{effect_interpretation}**")
+    
+    md_content.append("")
+    md_content.append(f"*Generated automatically by benchmark.py*")
+    
+    # Write to file
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, 'w') as f:
+        f.write('\n'.join(md_content))
+    
+    print(f"Comparison table saved to {save_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generate benchmark comparison plots')
     parser.add_argument('--classical_dir', type=str, default='results/classical',
@@ -284,6 +431,30 @@ def main():
     
     # Generate plot
     plot_comparison(classical_results, quantum_results, args.output)
+    
+    # Perform statistical tests
+    print("\nPerforming statistical tests...")
+    stats_test = compute_statistical_tests(classical_results, quantum_results)
+    
+    # Print statistical test results
+    print("\n" + "="*70)
+    print("STATISTICAL TESTS")
+    print("="*70)
+    if 'error' in stats_test:
+        print(f"Error: {stats_test['error']}")
+    else:
+        print(f"Test: Paired t-test (n={stats_test['n_pairs']} matched seeds)")
+        print(f"t-statistic: {stats_test['t_statistic']:.4f}")
+        print(f"p-value: {stats_test['p_value']:.4f}")
+        print(f"Cohen's d: {stats_test['cohens_d']:.4f}")
+        print(f"Mean difference (Q - C): {stats_test['mean_difference']:.2f}")
+        print(f"Significant at α=0.05: {'Yes ✓' if stats_test['significant_05'] else 'No ✗'}")
+        print(f"Significant at α=0.01: {'Yes ✓' if stats_test['significant_01'] else 'No ✗'}")
+    print("="*70)
+    
+    # Save comparison table
+    table_path = Path(args.output).parent / 'comparison_metrics.md'
+    save_comparison_table(classical_results, quantum_results, stats_test, table_path)
     
     # Print summary
     print_summary(classical_results, quantum_results)

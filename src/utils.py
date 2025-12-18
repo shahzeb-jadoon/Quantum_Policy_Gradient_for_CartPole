@@ -118,3 +118,59 @@ def print_summary(rewards, mode):
         print("✗ Not solved (avg reward < 195 over 100 episodes)")
     
     print("="*60 + "\n")
+
+
+def compute_variance_metrics(rewards):
+    """
+    Compute comprehensive variance and stability metrics.
+    
+    Args:
+        rewards (list or np.ndarray): Episode rewards
+        
+    Returns:
+        dict: Dictionary containing variance metrics
+            - variance: Population variance
+            - std: Sample standard deviation (ddof=1)
+            - coefficient_of_variation: CV = std / mean
+            - range: max - min
+            - q25, q50, q75: Quartiles
+    """
+    rewards = np.array(rewards)
+    
+    metrics = {
+        'variance': np.var(rewards),
+        'std': np.std(rewards, ddof=1),  # Sample std
+        'std_pop': np.std(rewards),  # Population std
+        'mean': np.mean(rewards),
+        'coefficient_of_variation': np.std(rewards, ddof=1) / np.mean(rewards) if np.mean(rewards) != 0 else np.inf,
+        'range': np.ptp(rewards),
+        'min': np.min(rewards),
+        'max': np.max(rewards),
+        'q25': np.percentile(rewards, 25),
+        'median': np.median(rewards),
+        'q75': np.percentile(rewards, 75)
+    }
+    
+    return metrics
+
+
+def compute_stability_score(rewards, window=100):
+    """
+    Compute stability score based on variance of moving average.
+    
+    Lower variance in the moving average indicates more stable learning.
+    
+    Args:
+        rewards (list): Episode rewards
+        window (int): Window size for moving average
+        
+    Returns:
+        float: Stability score (lower is more stable)
+    """
+    moving_avg = []
+    for i in range(len(rewards)):
+        start_idx = max(0, i - window + 1)
+        moving_avg.append(np.mean(rewards[start_idx:i+1]))
+    
+    # Stability is inverse of variance in moving average
+    return np.std(moving_avg[window:], ddof=1)  # Use sample std
