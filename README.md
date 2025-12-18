@@ -117,15 +117,15 @@ pytest tests/test_agent.py -v
 |--------|---------------|-------------|--------|
 | **Success Rate** | 100% (9/9 seeds) | 89% (8/9 seeds) | **Parity** (High Reliability) |
 | **Convergence** | 267 ± 87 eps | 275 ± 59 eps | **No Significant Diff** (p=0.81) |
-| **Parameters** | 51 | 48 | **6% Reduction** (Efficiency) |
+| **Parameters** | 51 | 42 | **18% Reduction** (Efficiency) |
 | **Hardware Valid?** | N/A | **Yes** (Parameter-Shift) | **Physically Realizable** |
 
-**Key Conclusion:** The Quantum Agent matches Classical performance with **6% fewer parameters**, validated via rigorous paired t-tests and hardware-compatible parameter-shift gradients.
+**Key Conclusion:** The Quantum Agent matches Classical performance with **18% fewer parameters**, validated via rigorous paired t-tests and hardware-compatible parameter-shift gradients.
 
 ### Demonstration Videos
 
-- **Classical Agent:** 30-second continuous balancing ([quantum_agent_demo.gif](report_assets/quantum_agent_demo.gif))
-- **Quantum Agent:** 30-second continuous balancing ([classical_agent_demo.gif](report_assets/classical_agent_demo.gif))
+- **Classical Agent:** 30-second continuous balancing ([classical_agent_demo.gif](report_assets/classical_agent_demo.gif))
+- **Quantum Agent:** 30-second continuous balancing ([quantum_agent_demo.gif](report_assets/quantum_agent_demo.gif))
 
 Both agents successfully balance the pole for 1500 consecutive timesteps with HUD overlay showing step counts.
 
