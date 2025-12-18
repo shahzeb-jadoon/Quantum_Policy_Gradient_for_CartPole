@@ -189,6 +189,17 @@ def grid_search(args):
     output_dir = Path(args.output_dir) / args.mode
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Initialize summary log
+    summary_file = output_dir / 'search_summary.txt'
+    with open(summary_file, 'w') as f:
+        f.write(f"Hyperparameter Search - {args.mode.upper()}\n")
+        f.write(f"{'='*80}\n")
+        f.write(f"Episodes per config: {args.episodes}\n")
+        f.write(f"Seeds: {args.seeds}\n")
+        f.write(f"Total configurations: {len(configs)}\n")
+        f.write(f"Total runs: {total_runs}\n")
+        f.write(f"{'='*80}\n\n")
+    
     # Run all configurations
     all_results = []
     
@@ -199,15 +210,27 @@ def grid_search(args):
             result = run_single_config(args.mode, config, args.episodes, seed)
             all_results.append(result)
             
-            # Update progress bar with best so far
+            # Update progress bar with best so far (enhanced display)
             best_so_far = max(all_results, key=lambda x: x['mean_reward'])
-            pbar.set_postfix({
-                'best_mean': f"{best_so_far['mean_reward']:.1f}",
-                'best_lr': f"{best_so_far['config']['lr']}"
-            })
+            
+            # Format config display based on mode
+            if args.mode == 'quantum':
+                config_str = f"lr={best_so_far['config']['lr']}, d={best_so_far['config']['depth']}, γ={best_so_far['config']['gamma']}"
+            else:
+                config_str = f"lr={best_so_far['config']['lr']}, γ={best_so_far['config']['gamma']}"
+            
+            pbar.set_postfix_str(f"best={best_so_far['mean_reward']:.1f} ({config_str})")
             pbar.update(1)
             
-            # Save incrementally after each run
+            # Append to summary log
+            with open(summary_file, 'a') as f:
+                config_items = ', '.join([f"{k}={v}" for k, v in result['config'].items()])
+                f.write(f"Run {len(all_results):3d}/{total_runs} | "
+                       f"{config_items:50s} | "
+                       f"Seed {result['seed']:3d} | "
+                       f"Mean: {result['mean_reward']:6.1f}\n")
+            
+            # Save incrementally after each run (without episode data)
             partial_file = output_dir / 'partial_results.json'
             with open(partial_file, 'w') as f:
                 json.dump({
@@ -217,7 +240,8 @@ def grid_search(args):
                                    for r in all_results],
                     'best_so_far': {
                         'config': best_so_far['config'],
-                        'mean_reward': best_so_far['mean_reward']
+                        'mean_reward': best_so_far['mean_reward'],
+                        'seed': best_so_far['seed']
                     }
                 }, f, indent=2)
     
@@ -266,18 +290,28 @@ def grid_search(args):
     
     # Save final results (output_dir already created for incremental saves)
     
-    # Save all results
+    # Add final summary to log
+    with open(summary_file, 'a') as f:
+        f.write(f"\n{'='*80}\n")
+        f.write(f"SEARCH COMPLETE\n")
+        f.write(f"{'='*80}\n")
+        f.write(f"Best Configuration:\n")
+        for key, value in aggregated[0]['config'].items():
+            f.write(f"  {key}: {value}\n")
+        f.write(f"  Mean Reward: {aggregated[0]['mean_reward_avg']:.2f} ± {aggregated[0]['mean_reward_std']:.2f}\n")
+    
+    # Save all results WITH episode rewards for complete analysis
     results_file = output_dir / 'grid_search_results.json'
     with open(results_file, 'w') as f:
         json.dump({
             'args': vars(args),
-            'all_results': [{k: v for k, v in r.items() if k != 'episode_rewards'} 
-                           for r in all_results],
+            'all_results': all_results,  # Include full data with episode_rewards
             'aggregated': aggregated,
             'top_config': aggregated[0]['config']
         }, f, indent=2)
     
-    print(f"Results saved to {results_file}")
+    print(f"\nResults saved to {results_file}")
+    print(f"Summary log saved to {summary_file}")
     
     # Save best configuration separately
     best_config_file = output_dir / 'best_config.json'
