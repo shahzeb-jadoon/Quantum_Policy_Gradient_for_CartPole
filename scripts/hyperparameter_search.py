@@ -185,6 +185,10 @@ def grid_search(args):
     print(f"Total runs: {total_runs}")
     print(f"{'='*70}\n")
     
+    # Setup output directory for incremental saves
+    output_dir = Path(args.output_dir) / args.mode
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     # Run all configurations
     all_results = []
     
@@ -202,6 +206,20 @@ def grid_search(args):
                 'best_lr': f"{best_so_far['config']['lr']}"
             })
             pbar.update(1)
+            
+            # Save incrementally after each run
+            partial_file = output_dir / 'partial_results.json'
+            with open(partial_file, 'w') as f:
+                json.dump({
+                    'completed_runs': len(all_results),
+                    'total_runs': total_runs,
+                    'all_results': [{k: v for k, v in r.items() if k != 'episode_rewards'} 
+                                   for r in all_results],
+                    'best_so_far': {
+                        'config': best_so_far['config'],
+                        'mean_reward': best_so_far['mean_reward']
+                    }
+                }, f, indent=2)
     
     pbar.close()
     
@@ -246,9 +264,7 @@ def grid_search(args):
     
     print(f"\n{'='*70}\n")
     
-    # Save results
-    output_dir = Path(args.output_dir) / args.mode
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Save final results (output_dir already created for incremental saves)
     
     # Save all results
     results_file = output_dir / 'grid_search_results.json'
