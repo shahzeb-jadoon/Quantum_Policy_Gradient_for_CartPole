@@ -62,20 +62,19 @@ def plot_comparison(classical_results, quantum_results, save_path):
     
     for rewards in quantum_results.values():
         rolling = compute_rolling_mean(rewards)
-        # Pad if needed
         if len(rolling) < max_len:
-            rolling = np.pad(rolling, (0, max_len - len(rolling)), 
-                           mode='edge')
+            rolling = np.pad(rolling, (0, max_len - len(rolling)), mode='edge')
         quantum_curves.append(rolling)
     
     quantum_curves = np.array(quantum_curves)
     quantum_mean = np.mean(quantum_curves, axis=0)
-    quantum_std = np.std(quantum_curves, axis=0)
+    quantum_std = np.std(quantum_curves, axis=0, ddof=1)  # Sample std
     
     episodes = np.arange(1, max_len + 1)
     
-    # Plot quantum
-    plt.plot(episodes, quantum_mean, 'r-', linewidth=2, label=f'Quantum (n={len(quantum_results)})')
+    # Plot quantum with confidence interval
+    plt.plot(episodes, quantum_mean, 'r-', linewidth=2, 
+             label=f'Quantum (n={len(quantum_results)})')
     plt.fill_between(episodes, 
                      quantum_mean - quantum_std,
                      quantum_mean + quantum_std,
@@ -83,10 +82,31 @@ def plot_comparison(classical_results, quantum_results, save_path):
     
     # Process and plot classical
     if classical_results:
-        for seed, rewards in classical_results.items():
-            rolling = compute_rolling_mean(rewards)
-            plt.plot(rolling, 'b-', linewidth=2, 
-                    label=f'Classical (seed {seed})')
+        if len(classical_results) == 1:
+            # Single seed - just plot the line
+            for seed, rewards in classical_results.items():
+                rolling = compute_rolling_mean(rewards)
+                plt.plot(rolling, 'b-', linewidth=2, 
+                        label=f'Classical (seed {seed})')
+        else:
+            # Multiple seeds - show mean and confidence interval
+            classical_curves = []
+            for rewards in classical_results.values():
+                rolling = compute_rolling_mean(rewards)
+                if len(rolling) < max_len:
+                    rolling = np.pad(rolling, (0, max_len - len(rolling)), mode='edge')
+                classical_curves.append(rolling)
+            
+            classical_curves = np.array(classical_curves)
+            classical_mean = np.mean(classical_curves, axis=0)
+            classical_std = np.std(classical_curves, axis=0, ddof=1)  # Sample std
+            
+            plt.plot(episodes, classical_mean, 'b-', linewidth=2, 
+                    label=f'Classical (n={len(classical_results)})')
+            plt.fill_between(episodes,
+                           classical_mean - classical_std,
+                           classical_mean + classical_std,
+                           color='blue', alpha=0.2)
     
     # Solved threshold
     plt.axhline(y=195, color='green', linestyle='--', linewidth=1.5,
@@ -107,7 +127,7 @@ def plot_comparison(classical_results, quantum_results, save_path):
 
 
 def print_summary(classical_results, quantum_results):
-    """Print statistical summary of results."""
+    """Print statistical summary with all seeds and solved-only breakdown."""
     print("\n" + "="*70)
     print("EXPERIMENTAL RESULTS SUMMARY")
     print("="*70)
@@ -115,24 +135,36 @@ def print_summary(classical_results, quantum_results):
     # Classical
     print("\n📘 CLASSICAL BASELINE (TinyMLP, 51 parameters)")
     print("-" * 70)
-    for seed, rewards in classical_results.items():
-        # Find solve episode
+    
+    classical_solve_eps = []
+    classical_final_avgs = []
+    classical_solved = 0
+    
+    for seed in sorted(classical_results.keys()):
+        rewards = classical_results[seed]
         solve_ep = None
         for i in range(99, len(rewards)):
             if np.mean(rewards[i-99:i+1]) >= 195:
                 solve_ep = i + 1
                 break
         final_avg = np.mean(rewards[-100:])
-        status = f"Solved at {solve_ep}" if solve_ep else "Did NOT solve"
-        print(f"Seed {seed}: {status}, Final avg: {final_avg:.1f}")
+        classical_final_avgs.append(final_avg)
+        
+        if solve_ep:
+            classical_solve_eps.append(solve_ep)
+            classical_solved += 1
+            status = f"Solved at {solve_ep}"
+        else:
+            status = "Did NOT solve"
+        print(f"Seed {seed:2d}: {status}, Final avg: {final_avg:.1f}")
     
     # Quantum
     print("\n📕 QUANTUM (VQC + Data Re-uploading, 42 parameters)")
     print("-" * 70)
     
-    solve_episodes = []
-    final_avgs = []
-    solved_count = 0
+    quantum_solve_eps = []
+    quantum_final_avgs = []
+    quantum_solved = 0
     
     for seed in sorted(quantum_results.keys()):
         rewards = quantum_results[seed]
@@ -143,11 +175,11 @@ def print_summary(classical_results, quantum_results):
                 break
         
         final_avg = np.mean(rewards[-100:])
-        final_avgs.append(final_avg)
+        quantum_final_avgs.append(final_avg)
         
         if solve_ep:
-            solve_episodes.append(solve_ep)
-            solved_count += 1
+            quantum_solve_eps.append(solve_ep)
+            quantum_solved += 1
             print(f"Seed {seed:2d}: Solved at {solve_ep:3d}, Final avg: {final_avg:6.1f}")
         else:
             print(f"Seed {seed:2d}: Did NOT solve,   Final avg: {final_avg:6.1f}")
@@ -155,22 +187,79 @@ def print_summary(classical_results, quantum_results):
     # Statistics
     print("\n📊 STATISTICAL COMPARISON")
     print("-" * 70)
-    print(f"Quantum success rate: {solved_count}/{len(quantum_results)} ({100*solved_count/len(quantum_results):.0f}%)")
     
-    if solve_episodes:
-        quantum_mean_solve = np.mean(solve_episodes)
-        quantum_std_solve = np.std(solve_episodes)
-        print(f"Quantum episodes to solve: {quantum_mean_solve:.1f} ± {quantum_std_solve:.1f}")
+    # Success rates
+    c_rate = 100 * classical_solved / len(classical_results)
+    q_rate = 100 * quantum_solved / len(quantum_results)
+    print(f"Classical success rate: {classical_solved}/{len(classical_results)} ({c_rate:.0f}%)")
+    print(f"Quantum success rate:   {quantum_solved}/{len(quantum_results)} ({q_rate:.0f}%)")
+    
+    # Episodes to solve (solved runs only)
+    if classical_solve_eps and quantum_solve_eps:
+        c_mean = np.mean(classical_solve_eps)
+        c_std = np.std(classical_solve_eps, ddof=1)  # Sample std
+        q_mean = np.mean(quantum_solve_eps)
+        q_std = np.std(quantum_solve_eps, ddof=1)  # Sample std
         
-        # Assume classical is seed 42 at 229
-        classical_solve = 229
-        diff = quantum_mean_solve - classical_solve
-        pct = (diff / classical_solve) * 100
-        print(f"Classical episodes to solve: {classical_solve}")
+        print(f"\n📈 Episodes to Solve (Solved Runs Only):")
+        print(f"Classical: {c_mean:.1f} ± {c_std:.1f} (n={len(classical_solve_eps)})")
+        print(f"Quantum:   {q_mean:.1f} ± {q_std:.1f} (n={len(quantum_solve_eps)})")
+        
+        diff = q_mean - c_mean
+        pct = (diff / c_mean) * 100
         print(f"Difference: {diff:+.1f} episodes ({pct:+.1f}%)")
     
-    print(f"\nQuantum final performance: {np.mean(final_avgs):.1f} ± {np.std(final_avgs):.1f}")
-    print(f"Parameter count: 42 (quantum) vs 51 (classical) = 18% fewer")
+    # Final performance (solved runs only)
+    c_solved_avgs = [classical_final_avgs[i] for i in range(len(classical_final_avgs)) 
+                     if i < len(classical_solve_eps)]
+    q_solved_avgs = [quantum_final_avgs[i] for i, seed in enumerate(sorted(quantum_results.keys())) 
+                     if any(j == i for j in range(len(quantum_solve_eps)))]
+    
+    # Actually get solved avgs correctly
+    c_solved_final = []
+    for seed in sorted(classical_results.keys()):
+        rewards = classical_results[seed]
+        solve_ep = None
+        for i in range(99, len(rewards)):
+            if np.mean(rewards[i-99:i+1]) >= 195:
+                solve_ep = i + 1
+                break
+        if solve_ep:
+            c_solved_final.append(np.mean(rewards[-100:]))
+    
+    q_solved_final = []
+    for seed in sorted(quantum_results.keys()):
+        rewards = quantum_results[seed]
+        solve_ep = None
+        for i in range(99, len(rewards)):
+            if np.mean(rewards[i-99:i+1]) >= 195:
+                solve_ep = i + 1
+                break
+        if solve_ep:
+            q_solved_final.append(np.mean(rewards[-100:]))
+    
+    if c_solved_final and q_solved_final:
+        c_perf_mean = np.mean(c_solved_final)
+        c_perf_std = np.std(c_solved_final, ddof=1)
+        q_perf_mean = np.mean(q_solved_final)
+        q_perf_std = np.std(q_solved_final, ddof=1)
+        
+        print(f"\n📈 Final Performance (Solved Runs Only, 100-ep avg):")
+        print(f"Classical: {c_perf_mean:.1f} ± {c_perf_std:.1f}")
+        print(f"Quantum:   {q_perf_mean:.1f} ± {q_perf_std:.1f}")
+    
+    # All seeds stats
+    print(f"\n📊 All Seeds Performance (Including Failed):")
+    c_all_mean = np.mean(classical_final_avgs)
+    c_all_std = np.std(classical_final_avgs, ddof=1)
+    q_all_mean = np.mean(quantum_final_avgs)
+    q_all_std = np.std(quantum_final_avgs, ddof=1)
+    print(f"Classical: {c_all_mean:.1f} ± {c_all_std:.1f}")
+    print(f"Quantum:   {q_all_mean:.1f} ± {q_all_std:.1f}")
+    
+    print(f"\n📋 Parameter Count:")
+    print(f"Classical: 51 parameters")
+    print(f"Quantum:   42 parameters (18% fewer)")
     print("="*70 + "\n")
 
 
